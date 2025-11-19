@@ -17,8 +17,13 @@ st.set_page_config(
 # À ADAPTER SELON TON REPO
 GITHUB_REPO = "orkhoven/etl_epsi"  # ex: "orkhoven/nom-du-repo"
 GITHUB_BRANCH = "main"
-GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)      # à ajouter dans .streamlit/secrets.toml
-SUBMISSIONS_DIR = "submissions"                          # dossier dans le repo
+
+# On suppose que le token est correctement configuré.
+# Si ce n'est pas le cas, Streamlit lèvera une erreur au démarrage,
+# ce qui évite le message "Aucun token GitHub..." dans le flux normal.
+GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+
+SUBMISSIONS_DIR = "submissions"  # dossier dans le repo
 
 # 4 CSV avec les noms proches des fichiers originaux AdventureWorks
 DATA_FILES = [
@@ -34,9 +39,6 @@ DATA_FILES = [
 # ---------------------------
 
 def slugify(text: str, default: str = "etudiant") -> str:
-    """
-    Simplifie le nom de l'étudiant pour l'utiliser dans un chemin de fichier.
-    """
     if not text:
         return default
     text = text.strip().lower()
@@ -45,13 +47,15 @@ def slugify(text: str, default: str = "etudiant") -> str:
     return text or default
 
 
-def upload_file_to_github(file_bytes: bytes, dest_path: str, token: str, repo: str, branch: str = "main") -> requests.Response:
-    """
-    Envoie un fichier dans un repo GitHub via l'API.
-    Crée toujours un nouveau fichier (nom unique) pour éviter la gestion des SHA.
-    """
+def upload_file_to_github(
+    file_bytes: bytes,
+    dest_path: str,
+    token: str,
+    repo: str,
+    branch: str = "main"
+) -> requests.Response:
     if token is None:
-        raise RuntimeError("Aucun token GitHub trouvé dans st.secrets['GITHUB_TOKEN'].")
+        raise RuntimeError("Token GitHub manquant (variable GITHUB_TOKEN).")
 
     url = f"https://api.github.com/repos/{repo}/contents/{dest_path}"
     b64_content = base64.b64encode(file_bytes).decode("utf-8")
@@ -321,15 +325,11 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
             st.error("Vous devez cocher la case de confirmation avant d’envoyer.")
         elif not code_file:
             st.error("Le fichier de code (notebook ou script Python) est obligatoire.")
-        elif GITHUB_TOKEN is None:
-            st.error("Aucun token GitHub n’est configuré. Contacter le formateur.")
         else:
             try:
-                # Timestamp UTC propre et cohérent
                 now = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 student_slug = slugify(student_name)
 
-                # Dossier étudiant
                 base_dir = f"{SUBMISSIONS_DIR}/{student_slug}_{now}"
 
                 results = []
@@ -361,7 +361,7 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
                     )
                     results.append(("rapport", resp_report))
 
-                # 3) Métadonnées (nom, email, groupe, commentaire)
+                # 3) Métadonnées
                 meta_content = f"""Nom complet : {student_name}
 Groupe / Promo : {student_group}
 E-mail : {student_email}
@@ -379,7 +379,6 @@ Date (UTC) : {datetime.now(timezone.utc).isoformat()}
                 )
                 results.append(("meta", resp_meta))
 
-                # Vérification des réponses GitHub
                 ok = all(r.status_code in (200, 201) for _, r in results)
                 if ok:
                     st.success("Votre dépôt a bien été envoyé sur GitHub. ✅")
