@@ -14,18 +14,10 @@ st.set_page_config(
     layout="wide"
 )
 
-# Repo GitHub cible
-GITHUB_OWNER = "orkhoven"                  # ton username GitHub
-GITHUB_REPO_NAME = "etl_epsi"             # nom du repo
-GITHUB_REPO = f"{GITHUB_OWNER}/{GITHUB_REPO_NAME}"
-GITHUB_BRANCH = "main"
-
-# IMPORTANT POUR STREAMLIT CLOUD :
-# Dans l'interface Streamlit Cloud (Settings → Secrets), tu dois avoir :
-# GITHUB_TOKEN = "ghp_XXXX..."
-GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN")
-
-SUBMISSIONS_DIR = "submissions"           # dossier dans le repo
+# Même logique que l'autre app
+GITHUB_REPO = "orkhoven/etl_epsi"          # ex: "orkhoven/etl_epsi"
+GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]   # même clé que dans l'app qui marche
+SUBMISSIONS_DIR = "submissions"            # dossier dans le repo
 
 # 4 CSV avec les noms proches des fichiers originaux AdventureWorks
 DATA_FILES = [
@@ -41,6 +33,9 @@ DATA_FILES = [
 # ---------------------------
 
 def slugify(text: str, default: str = "etudiant") -> str:
+    """
+    Simplifie le nom de l'étudiant pour l'utiliser dans un chemin de fichier.
+    """
     if not text:
         return default
     text = text.strip().lower()
@@ -49,60 +44,31 @@ def slugify(text: str, default: str = "etudiant") -> str:
     return text or default
 
 
-def upload_file_to_github(
-    file_bytes: bytes,
-    dest_path: str,
-    token: str,
-    repo: str,
-    branch: str = "main",
-) -> requests.Response:
+def upload_to_github_bytes(file_bytes: bytes, dest_path: str, repo: str, token: str, commit_msg: str | None = None) -> int:
     """
-    Envoie un fichier dans un repo GitHub via l'API REST.
-    Utilise l'en-tête Authorization: Bearer <token> (recommandé par GitHub).
-    Crée toujours un nouveau fichier (chemin unique) pour éviter la gestion du SHA.
+    Version 'bytes' de upload_to_github, calquée sur l'app qui fonctionne :
+
+    - URL : https://api.github.com/repos/{repo}/contents/{dest_path}
+    - Header : Authorization: token <token>
+    - Body JSON : {message, content}
     """
-    if not token:
-        raise RuntimeError("Token GitHub manquant (GITHUB_TOKEN).")
+    api_url = f"https://api.github.com/repos/{repo}/contents/{dest_path}"
 
-    url = f"https://api.github.com/repos/{repo}/contents/{dest_path}"
-    b64_content = base64.b64encode(file_bytes).decode("utf-8")
+    content_b64 = base64.b64encode(file_bytes).decode("utf-8")
 
+    headers = {"Authorization": f"token {token}"}
     data = {
-        "message": f"Ajout dépôt étudiant : {dest_path}",
-        "content": b64_content,
-        "branch": branch,
+        "message": commit_msg or f"Add {dest_path}",
+        "content": content_b64,
     }
 
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+    resp = requests.put(api_url, headers=headers, json=data)
 
-    response = requests.put(url, headers=headers, json=data)
-    return response
-
-
-def test_github_token(token: str) -> tuple[int, dict]:
-    """
-    Teste le token en appelant /user.
-    Permet de voir EXACTEMENT ce que renvoie GitHub depuis Streamlit Cloud.
-    """
-    if not token:
-        return 0, {"error": "GITHUB_TOKEN manquant dans st.secrets"}
-
-    url = "https://api.github.com/user"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
-    resp = requests.get(url, headers=headers)
-    try:
-        data = resp.json()
-    except Exception:
-        data = {"raw_text": resp.text}
-    return resp.status_code, data
+    if resp.status_code not in (200, 201):
+        st.error(f"Erreur GitHub ({resp.status_code}) pour {dest_path} : {resp.text}")
+    else:
+        st.info(f"✅ Fichier envoyé : {dest_path}")
+    return resp.status_code
 
 
 # ---------------------------
@@ -316,13 +282,6 @@ Sinon, un message indiquera au formateur qu’il doit ajouter le fichier corresp
 with tab_submit:
     st.header("Dépôt de votre travail sur GitHub")
 
-    # Bloc de debug pour le token
-    with st.expander("Debug GitHub (formateur uniquement)"):
-        if st.button("Tester la connexion GitHub (/user)"):
-            status, data = test_github_token(GITHUB_TOKEN)
-            st.write("Status HTTP:", status)
-            st.write("Réponse JSON:", data)
-
     st.markdown(
         """
 Remplissez les informations ci-dessous et uploadez vos fichiers.  
@@ -362,13 +321,12 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
             st.error("Vous devez cocher la case de confirmation avant d’envoyer.")
         elif not code_file:
             st.error("Le fichier de code (notebook ou script Python) est obligatoire.")
-        elif not GITHUB_TOKEN:
-            st.error("GITHUB_TOKEN absent dans les secrets Streamlit.")
         else:
             try:
                 now = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                student_slug = slugify(student_name)
+                student_slug = slugify(student_name)  # "" donnera "etudiant"
 
+                # On met tout dans submissions/<slug>_<timestamp>/
                 base_dir = f"{SUBMISSIONS_DIR}/{student_slug}_{now}"
 
                 results = []
@@ -377,28 +335,28 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
                 code_bytes = code_file.read()
                 code_ext = os.path.splitext(code_file.name)[1]
                 code_dest = f"{base_dir}/code{code_ext}"
-                resp_code = upload_file_to_github(
+                status_code_code = upload_to_github_bytes(
                     file_bytes=code_bytes,
                     dest_path=code_dest,
-                    token=GITHUB_TOKEN,
                     repo=GITHUB_REPO,
-                    branch=GITHUB_BRANCH
+                    token=GITHUB_TOKEN,
+                    commit_msg=f"TP ETL - code - {student_name}"
                 )
-                results.append(("code", resp_code))
+                results.append(("code", status_code_code))
 
                 # 2) Rapport (optionnel)
                 if report_file is not None:
                     report_bytes = report_file.read()
                     report_ext = os.path.splitext(report_file.name)[1]
                     report_dest = f"{base_dir}/rapport{report_ext}"
-                    resp_report = upload_file_to_github(
+                    status_code_report = upload_to_github_bytes(
                         file_bytes=report_bytes,
                         dest_path=report_dest,
-                        token=GITHUB_TOKEN,
                         repo=GITHUB_REPO,
-                        branch=GITHUB_BRANCH
+                        token=GITHUB_TOKEN,
+                        commit_msg=f"TP ETL - rapport - {student_name}"
                     )
-                    results.append(("rapport", resp_report))
+                    results.append(("rapport", status_code_report))
 
                 # 3) Métadonnées
                 meta_content = f"""Nom complet : {student_name}
@@ -409,24 +367,24 @@ Date (UTC) : {datetime.now(timezone.utc).isoformat()}
 """
                 meta_bytes = meta_content.encode("utf-8")
                 meta_dest = f"{base_dir}/meta.txt"
-                resp_meta = upload_file_to_github(
+                status_code_meta = upload_to_github_bytes(
                     file_bytes=meta_bytes,
                     dest_path=meta_dest,
-                    token=GITHUB_TOKEN,
                     repo=GITHUB_REPO,
-                    branch=GITHUB_BRANCH
+                    token=GITHUB_TOKEN,
+                    commit_msg=f"TP ETL - meta - {student_name}"
                 )
-                results.append(("meta", resp_meta))
+                results.append(("meta", status_code_meta))
 
-                ok = all(r.status_code in (200, 201) for _, r in results)
+                ok = all(code in (200, 201) for _, code in results)
                 if ok:
                     st.success("Votre dépôt a bien été envoyé sur GitHub.")
-                    for label, r in results:
-                        st.write(f"- {label} → statut GitHub : {r.status_code}")
+                    for label, code in results:
+                        st.write(f"- {label} → statut GitHub : {code}")
                 else:
                     st.error("Une erreur est survenue lors de l’envoi sur GitHub.")
-                    for label, r in results:
-                        st.write(f"- {label} → statut GitHub : {r.status_code} / réponse : {r.text}")
+                    for label, code in results:
+                        st.write(f"- {label} → statut GitHub : {code}")
 
             except Exception as e:
                 st.error(f"Erreur lors de l’envoi sur GitHub : {e}")
