@@ -20,9 +20,10 @@ GITHUB_REPO_NAME = "etl_epsi"             # nom du repo
 GITHUB_REPO = f"{GITHUB_OWNER}/{GITHUB_REPO_NAME}"
 GITHUB_BRANCH = "main"
 
-# Token stocké dans .streamlit/secrets.toml ou dans les secrets Streamlit Cloud
-# secrets.toml doit contenir : GITHUB_TOKEN = "ghp_XXXX..."
-GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
+# IMPORTANT POUR STREAMLIT CLOUD :
+# Dans l'interface Streamlit Cloud (Settings → Secrets), tu dois avoir :
+# GITHUB_TOKEN = "ghp_XXXX..."
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN")
 
 SUBMISSIONS_DIR = "submissions"           # dossier dans le repo
 
@@ -73,13 +74,35 @@ def upload_file_to_github(
     }
 
     headers = {
-        "Authorization": f"Bearer {token}",                 # clé
+        "Authorization": f"Bearer {token}",
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
     response = requests.put(url, headers=headers, json=data)
     return response
+
+
+def test_github_token(token: str) -> tuple[int, dict]:
+    """
+    Teste le token en appelant /user.
+    Permet de voir EXACTEMENT ce que renvoie GitHub depuis Streamlit Cloud.
+    """
+    if not token:
+        return 0, {"error": "GITHUB_TOKEN manquant dans st.secrets"}
+
+    url = "https://api.github.com/user"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+    }
+    resp = requests.get(url, headers=headers)
+    try:
+        data = resp.json()
+    except Exception:
+        data = {"raw_text": resp.text}
+    return resp.status_code, data
 
 
 # ---------------------------
@@ -293,6 +316,13 @@ Sinon, un message indiquera au formateur qu’il doit ajouter le fichier corresp
 with tab_submit:
     st.header("Dépôt de votre travail sur GitHub")
 
+    # Bloc de debug pour le token
+    with st.expander("Debug GitHub (formateur uniquement)"):
+        if st.button("Tester la connexion GitHub (/user)"):
+            status, data = test_github_token(GITHUB_TOKEN)
+            st.write("Status HTTP:", status)
+            st.write("Réponse JSON:", data)
+
     st.markdown(
         """
 Remplissez les informations ci-dessous et uploadez vos fichiers.  
@@ -332,6 +362,8 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
             st.error("Vous devez cocher la case de confirmation avant d’envoyer.")
         elif not code_file:
             st.error("Le fichier de code (notebook ou script Python) est obligatoire.")
+        elif not GITHUB_TOKEN:
+            st.error("GITHUB_TOKEN absent dans les secrets Streamlit.")
         else:
             try:
                 now = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
@@ -388,7 +420,7 @@ Date (UTC) : {datetime.now(timezone.utc).isoformat()}
 
                 ok = all(r.status_code in (200, 201) for _, r in results)
                 if ok:
-                    st.success("Votre dépôt a bien été envoyé sur GitHub. ✅")
+                    st.success("Votre dépôt a bien été envoyé sur GitHub.")
                     for label, r in results:
                         st.write(f"- {label} → statut GitHub : {r.status_code}")
                 else:
