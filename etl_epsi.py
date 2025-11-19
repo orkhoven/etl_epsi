@@ -15,14 +15,16 @@ st.set_page_config(
 )
 
 # Repo GitHub cible
-GITHUB_USER = "orkhoven"                # ton username GitHub
-GITHUB_REPO = "orkhoven/etl_epsi"       # ex: "orkhoven/nom-du-repo"
+GITHUB_OWNER = "orkhoven"                  # ton username GitHub
+GITHUB_REPO_NAME = "etl_epsi"             # nom du repo
+GITHUB_REPO = f"{GITHUB_OWNER}/{GITHUB_REPO_NAME}"
 GITHUB_BRANCH = "main"
 
 # Token stocké dans .streamlit/secrets.toml ou dans les secrets Streamlit Cloud
+# secrets.toml doit contenir : GITHUB_TOKEN = "ghp_XXXX..."
 GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
 
-SUBMISSIONS_DIR = "submissions"         # dossier dans le repo
+SUBMISSIONS_DIR = "submissions"           # dossier dans le repo
 
 # 4 CSV avec les noms proches des fichiers originaux AdventureWorks
 DATA_FILES = [
@@ -54,12 +56,12 @@ def upload_file_to_github(
     branch: str = "main",
 ) -> requests.Response:
     """
-    Envoie un fichier dans un repo GitHub via l'API.
-    Utilise authentification basique (username + PAT).
-    Crée toujours un nouveau fichier (nom unique) pour éviter la gestion des SHA.
+    Envoie un fichier dans un repo GitHub via l'API REST.
+    Utilise l'en-tête Authorization: Bearer <token> (recommandé par GitHub).
+    Crée toujours un nouveau fichier (chemin unique) pour éviter la gestion du SHA.
     """
-    if token is None:
-        raise RuntimeError("Token GitHub manquant (variable GITHUB_TOKEN).")
+    if not token:
+        raise RuntimeError("Token GitHub manquant (GITHUB_TOKEN).")
 
     url = f"https://api.github.com/repos/{repo}/contents/{dest_path}"
     b64_content = base64.b64encode(file_bytes).decode("utf-8")
@@ -71,17 +73,12 @@ def upload_file_to_github(
     }
 
     headers = {
+        "Authorization": f"Bearer {token}",                 # clé
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    # Authentification: username + PAT (PAT remplace le mot de passe)
-    response = requests.put(
-        url,
-        headers=headers,
-        json=data,
-        auth=(GITHUB_USER, token),
-    )
+    response = requests.put(url, headers=headers, json=data)
     return response
 
 
@@ -340,7 +337,6 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
                 now = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 student_slug = slugify(student_name)
 
-                # Dossier étudiant
                 base_dir = f"{SUBMISSIONS_DIR}/{student_slug}_{now}"
 
                 results = []
