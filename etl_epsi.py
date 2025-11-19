@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import base64
 import requests
-import datetime
+from datetime import datetime, timezone
 import re
 
 # ---------------------------
@@ -325,7 +325,8 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
             st.error("Aucun token GitHub n’est configuré. Contacter le formateur.")
         else:
             try:
-                now = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                # Timestamp UTC propre et cohérent
+                now = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 student_slug = slugify(student_name)
 
                 # Dossier étudiant
@@ -365,7 +366,7 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
 Groupe / Promo : {student_group}
 E-mail : {student_email}
 Commentaire : {comment}
-Date (UTC) : {datetime.datetime.utcnow().isoformat()}
+Date (UTC) : {datetime.now(timezone.utc).isoformat()}
 """
                 meta_bytes = meta_content.encode("utf-8")
                 meta_dest = f"{base_dir}/meta.txt"
