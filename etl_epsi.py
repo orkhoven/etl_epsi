@@ -75,7 +75,7 @@ st.markdown(
 Ce TP correspond à la **Partie 1 – Intégration de données en Python** du module  
 **TRDE703 – Intégration des données (Mastère Expert en Cybersécurité)**.
 
-L’objectif est de construire un **mini pipeline ETL en Python** avant de passer aux outils ETL (Talend / Pentaho / SSIS) dans la séance suivante.
+L’objectif est de construire un **mini pipeline ETL en Python**
 """
 )
 
