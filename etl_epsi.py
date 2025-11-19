@@ -1,256 +1,384 @@
-
 import streamlit as st
-import sqlite3
-import pandas as pd
+import os
+import base64
+import requests
+import datetime
 import re
-from contextlib import closing
 
-st.set_page_config(page_title="SQL Practice: Books & Movies", layout="wide")
+# ---------------------------
+# CONFIG
+# ---------------------------
 
-# ---------- Default schema/data (adapted to SQLite) ----------
-DEFAULT_SQL = r"""
--- Clean start (SQLite variant)
-PRAGMA foreign_keys = OFF;
-DROP TABLE IF EXISTS books;
-DROP TABLE IF EXISTS movies;
-DROP TABLE IF EXISTS authors;
-DROP TABLE IF EXISTS directors;
-PRAGMA foreign_keys = ON;
+st.set_page_config(
+    page_title="TP Intégration de données – AdventureWorks",
+    layout="wide"
+)
 
--- Authors
-CREATE TABLE authors (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  country TEXT,
-  birth_year INTEGER
-);
+# À ADAPTER SELON TON REPO
+GITHUB_REPO = "orkhoven/etl_epsi"  
+GITHUB_BRANCH = "main"
+GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)      # à ajouter dans .streamlit/secrets.toml
+SUBMISSIONS_DIR = "submissions"                          # dossier dans le repo
 
--- Books
-CREATE TABLE books (
-  id INTEGER PRIMARY KEY,
-  title TEXT NOT NULL,
-  author_id INTEGER,
-  year INTEGER,
-  genre TEXT,
-  rating NUMERIC,
-  pages INTEGER,
-  FOREIGN KEY (author_id) REFERENCES authors(id)
-);
-
--- Directors
-CREATE TABLE directors (
-  id INTEGER PRIMARY KEY,
-  name TEXT NOT NULL,
-  country TEXT,
-  birth_year INTEGER
-);
-
--- Movies
-CREATE TABLE movies (
-  id INTEGER PRIMARY KEY,
-  title TEXT NOT NULL,
-  director_id INTEGER,
-  year INTEGER,
-  genre TEXT,
-  rating NUMERIC,
-  duration_minutes INTEGER,
-  FOREIGN KEY (director_id) REFERENCES directors(id)
-);
-
--- Data: authors (11)
-INSERT INTO authors (id, name, country, birth_year) VALUES
-(1,'Ava Martin','USA',1975),
-(2,'Luca Moretti','Italy',1969),
-(3,'Priya Sharma','India',1982),
-(4,'Hiro Tanaka','Japan',1970),
-(5,'Sofia Garcia','Spain',1988),
-(6,'Thomas Müller','Germany',1965),
-(7,'Emily O''Connor','Ireland',1990),
-(8,'Ahmed El-Sayed','Egypt',1978),
-(9,'Claire Dupont','France',1980),
-(10,'Jacob Svensson','Sweden',1973),
-(11,'Maya Patel','UK',1992);
-
--- Data: books (11)
-INSERT INTO books (id, title, author_id, year, genre, rating, pages) VALUES
-(1,'Stars Over Cairo',8,2015,'Drama',4.3,320),
-(2,'The Last Algorithm',2,2020,'Sci-Fi',4.7,412),
-(3,'Whispers in Winter',9,2012,'Romance',3.9,256),
-(4,'Gardens of Kyoto',4,2018,'Mystery',4.1,288),
-(5,'Midnight Circus',6,2005,'Fantasy',4.0,360),
-(6,'Echoes of Tomorrow',3,2021,'Sci-Fi',4.8,488),
-(7,'The Quiet Harbor',1,2010,'Drama',3.7,220),
-(8,'A Walk Through Lisbon',5,2016,'Romance',4.2,304),
-(9,'Code of Silence',10,2008,'Thriller',4.5,340),
-(10,'The Paper Garden',7,2019,'Mystery',3.8,272),
-(11,'Notes from the Train',11,2022,'Drama',4.6,198);
-
--- Data: directors (11)
-INSERT INTO directors (id, name, country, birth_year) VALUES
-(1,'Martin Ruiz','Mexico',1968),
-(2,'Claire Legrand','France',1976),
-(3,'Kenji Sato','Japan',1981),
-(4,'Olivia Bennett','UK',1980),
-(5,'Diego Fernandez','Spain',1972),
-(6,'Anna Kowalska','Poland',1974),
-(7,'Marcus Brown','USA',1965),
-(8,'Li Wei','China',1979),
-(9,'Nina Rossi','Italy',1984),
-(10,'Sven Larsson','Sweden',1970),
-(11,'Rana Habib','Lebanon',1986);
-
--- Data: movies (11)
-INSERT INTO movies (id, title, director_id, year, genre, rating, duration_minutes) VALUES
-(1,'Nightfall in Rome',9,2011,'Drama',7.2,112),
-(2,'Quantum Blossom',3,2020,'Sci-Fi',8.6,135),
-(3,'The Lovers'' Map',2,2016,'Romance',6.9,101),
-(4,'Hidden Library',4,2019,'Mystery',7.8,124),
-(5,'Paper Clouds',5,2007,'Fantasy',7.0,128),
-(6,'Silent Protocol',7,2009,'Thriller',8.1,140),
-(7,'Harbor Lights',1,2013,'Drama',6.5,96),
-(8,'Tomorrow''s Song',8,2021,'Sci-Fi',9.0,148),
-(9,'Lisbon Afternoon',5,2015,'Romance',7.4,103),
-(10,'Midnight Train',10,2003,'Mystery',6.8,115),
-(11,'City of Paper',11,2018,'Drama',7.6,122);
-"""
-
-EXERCISES = [
-    "1) List all book titles and their years (ORDER BY year ASC).",
-    "2) Movies with genre='Sci-Fi' (title, year).",
-    "3) Books with rating >= 4.5 (title, author_id, rating) ORDER BY rating DESC.",
-    "4) Movies released BETWEEN 2015 AND 2021 (title, year, director_id).",
-    "5) Books pages BETWEEN 250 AND 400 AND rating > 4.0 (title, pages, rating).",
-    "6) Top 5 highest-rated movies (title, rating) ORDER BY rating DESC LIMIT 5.",
-    "7) Books where genre='Drama' OR 'Romance' (title, genre, year).",
-    "8) Movies where (genre='Mystery' OR 'Thriller') AND rating >= 7.0 (title, genre, rating).",
-    "9) Books before 2010 (title, year) ORDER BY year DESC.",
-    "10) Movies with duration BETWEEN 100 AND 130 (title, duration_minutes, genre).",
-    "11) 3 most recent books (title, year) LIMIT 3.",
-    "12) Books with rating < 4.0 OR pages < 250 (title, rating, pages).",
-    "13) Movies where year IN (2019, 2020) (title, year, rating).",
-    "14) Books with author_id IN (1,3,5) AND rating >= 4.0.",
-    "15) All movies ORDER BY genre ASC, rating DESC.",
-    "16) List all book titles with the author name and country.",
-    "17) Show all movies with their director name, including movies with no matching director (LEFT JOIN).",
-    "18) For each author, show the number of books (include authors with zero).",
-    "19) For each director, show the average rating of their movies (only where at least one movie exists).",
-    "20) By country, show counts of authors and directors (simulate FULL JOIN).",
+DATA_FILES = [
+    ("Ventes (Sales)", "data/sales.csv"),
+    ("Clients (Customers)", "data/customers.xlsx"),
+    ("Produits (Products)", "data/products.csv"),
+    ("Territoires (Territories)", "data/territories.csv"),
 ]
 
-# ---------- Database helpers ----------
-@st.cache_resource
-def get_conn():
-    conn = sqlite3.connect(":memory:", check_same_thread=False)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
 
-def reset_db(conn, sql_script: str):
-    # Strip MySQL-specific statements if pasted
-    script = re.sub(r"SET\s+FOREIGN_KEY_CHECKS\s*=\s*\d+;\s*", "", sql_script, flags=re.IGNORECASE)
-    with closing(conn.cursor()) as cur:
-        cur.executescript(script)
-    conn.commit()
+# ---------------------------
+# OUTILS
+# ---------------------------
 
-def run_sql(conn, sql: str):
-    with closing(conn.cursor()) as cur:
-        cur.execute(sql)
-        if re.match(r"\s*(WITH\b|SELECT\b|PRAGMA\b)", sql.strip(), flags=re.IGNORECASE):
-            cols = [d[0] for d in cur.description] if cur.description else []
-            rows = cur.fetchall()
-            df = pd.DataFrame(rows, columns=cols)
-            return df, None
-        else:
-            conn.commit()
-            return None, f"OK, {cur.rowcount if cur.rowcount != -1 else 0} row(s) affected."
+def slugify(text: str, default: str = "etudiant") -> str:
+    """
+    Simplifie le nom de l'étudiant pour l'utiliser dans un chemin de fichier.
+    """
+    if not text:
+        return default
+    text = text.strip().lower()
+    text = re.sub(r"\s+", "_", text)
+    text = re.sub(r"[^a-z0-9_]+", "", text)
+    return text or default
 
-# ---------- UI ----------
-st.title("SQL Practice — Books & Movies (SQLite in Streamlit)")
 
-# Sidebar
-with st.sidebar:
-    st.header("Database")
-    if "initialized" not in st.session_state:
-        st.session_state.initialized = False
+def upload_file_to_github(file_bytes: bytes, dest_path: str, token: str, repo: str, branch: str = "main") -> requests.Response:
+    """
+    Envoie un fichier dans un repo GitHub via l'API.
+    Crée toujours un nouveau fichier (nom unique) pour éviter la gestion des SHA.
+    """
+    if token is None:
+        raise RuntimeError("Aucun token GitHub trouvé dans st.secrets['GITHUB_TOKEN'].")
 
-    default_btn = st.button("Initialize / Reset with default data", use_container_width=True)
-    custom_sql = st.text_area("Or paste your own schema + data (optional)", height=220, value=DEFAULT_SQL)
-    custom_btn = st.button("Reset using the script above", use_container_width=True)
+    url = f"https://api.github.com/repos/{repo}/contents/{dest_path}"
+    b64_content = base64.b64encode(file_bytes).decode("utf-8")
 
-conn = get_conn()
-
-if not st.session_state.initialized or default_btn:
-    reset_db(conn, DEFAULT_SQL)
-    st.session_state.initialized = True
-elif custom_btn:
-    reset_db(conn, custom_sql)
-    st.session_state.initialized = True
-
-tabs = st.tabs(["Data Preview", "Exercises", "SQL Console"])
-
-with tabs[0]:
-    st.subheader("Tables")
-    for tbl in ["authors", "books", "directors", "movies"]:
-        st.markdown(f"**{tbl}**")
-        try:
-            df, _ = run_sql(conn, f"SELECT * FROM {tbl} LIMIT 50;")
-            st.dataframe(df, use_container_width=True, hide_index=True)
-        except Exception as e:
-            st.error(str(e))
-
-with tabs[1]:
-    st.subheader("Exercises")
-    idx = st.selectbox("Pick an exercise", options=list(range(1, len(EXERCISES)+1)), format_func=lambda i: EXERCISES[i-1])
-    st.write(EXERCISES[idx-1])
-
-    presets = {
-        16: "SELECT b.title, a.name AS author_name, a.country\nFROM books b\nJOIN authors a ON a.id = b.author_id;",
-        17: "SELECT m.title, d.name AS director_name\nFROM movies m\nLEFT JOIN directors d ON d.id = m.director_id;",
-        18: "SELECT a.name, COUNT(b.id) AS total_books\nFROM authors a\nLEFT JOIN books b ON b.author_id = a.id\nGROUP BY a.name;",
-        19: "SELECT d.name, AVG(m.rating) AS avg_rating\nFROM directors d\nJOIN movies m ON m.director_id = d.id\nGROUP BY d.name;",
-        20: ("-- FULL JOIN simulation by country (SQLite-compatible)\n"
-             "WITH a AS (\n  SELECT country, COUNT(*) AS total_authors FROM authors GROUP BY country\n),\n"
-             "d AS (\n  SELECT country, COUNT(*) AS total_directors FROM directors GROUP BY country\n),\n"
-             "all_c AS (\n  SELECT country FROM a\n  UNION\n  SELECT country FROM d\n)\n"
-             "SELECT all_c.country,\n"
-             "       COALESCE(a.total_authors, 0) AS total_authors,\n"
-             "       COALESCE(d.total_directors, 0) AS total_directors\n"
-             "FROM all_c\nLEFT JOIN a ON a.country = all_c.country\n"
-             "LEFT JOIN d ON d.country = all_c.country\nORDER BY all_c.country;"),
+    data = {
+        "message": f"Ajout dépôt étudiant : {dest_path}",
+        "content": b64_content,
+        "branch": branch,
     }
-    default_sql = presets.get(idx, "-- Write your query here")
-    user_query = st.text_area("Your SQL", value=default_sql, height=220)
 
-    col1, col2 = st.columns([1,1])
-    with col1:
-        run_ex = st.button("Run query", type="primary", use_container_width=True)
-    with col2:
-        reset_btn = st.button("Reset database", use_container_width=True)
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+    }
 
-    if reset_btn:
-        reset_db(conn, DEFAULT_SQL)
-        st.success("Database reset.")
+    response = requests.put(url, headers=headers, json=data)
+    return response
 
-    if run_ex:
-        try:
-            df, msg = run_sql(conn, user_query)
-            if df is not None:
-                st.dataframe(df, use_container_width=True, hide_index=True)
-            else:
-                st.success(msg or "OK")
-        except Exception as e:
-            st.error(str(e))
 
-with tabs[2]:
-    st.subheader("SQL Console")
-    free_sql = st.text_area("Enter any SQL to run against the current database", height=180, placeholder="SELECT * FROM books LIMIT 10;")
-    if st.button("Execute", type="primary"):
-        try:
-            df, msg = run_sql(conn, free_sql)
-            if df is not None:
-                st.dataframe(df, use_container_width=True, hide_index=True)
-            else:
-                st.success(msg or "OK")
-        except Exception as e:
-            st.error(str(e))
+# ---------------------------
+# UI
+# ---------------------------
 
-st.caption("SQLite engine inside Streamlit. MySQL FULL JOIN is emulated via UNION/LEFT JOIN.")
+st.title("TP Intégration de données – AdventureWorks")
+st.markdown(
+    """
+Ce TP correspond à la **Partie 1 – Intégration de données en Python** du module  
+**TRDE703 – Intégration des données (Mastère Expert en Cybersécurité)**.
+
+L’objectif est de construire un **mini pipeline ETL en Python** avant de passer aux outils ETL (Talend / Pentaho / SSIS) dans la séance suivante.
+"""
+)
+
+tab_story, tab_instructions, tab_data, tab_submit = st.tabs(
+    ["📖 Contexte & histoire", "🧪 Consignes & livrables", "📥 Jeux de données", "📤 Dépôt sur GitHub"]
+)
+
+# ---------------------------
+# Onglet 1 – Contexte & histoire
+# ---------------------------
+
+with tab_story:
+    st.header("Contexte : l’entreprise AdventureWorks")
+
+    st.markdown(
+        """
+AdventureWorks est un **fabricant et vendeur mondial de vélos, pièces et accessoires**.  
+L’entreprise vend :
+
+- via des **magasins physiques**,  
+- via une **plateforme de vente en ligne**.
+
+Pour fonctionner, AdventureWorks s’appuie sur plusieurs systèmes :
+
+- un **ERP** pour les commandes et la logistique,  
+- un **CRM** pour les clients,  
+- un **système catalogue produits**,  
+- un **système de gestion des territoires commerciaux**.
+
+Chacun de ces systèmes exporte des données dans des formats différents (CSV, Excel, etc.).  
+La direction veut maintenant **centraliser** ces données pour suivre :
+
+- la performance des ventes,  
+- le comportement client,  
+- la performance par territoire,  
+- la rentabilité par catégorie de produits.
+
+Vous êtes **data engineer junior**. Votre mission pour cette séance :  
+construire, en Python, un **flux d’intégration de données** à partir de plusieurs fichiers AdventureWorks,  
+et produire une table propre, prête pour l’analyse.
+"""
+    )
+
+    st.subheader("Objectif pédagogique")
+    st.markdown(
+        """
+À la fin de ce TP, vous devez être capable de :
+
+- **Extraire** des données issues de plusieurs fichiers (formats différents),  
+- **Transformer** ces données (nettoyage, typage, jointures, colonnes dérivées),  
+- **Charger** le résultat dans un fichier unique (CSV ou base SQLite).
+
+Ce que vous faites ici en Python sera **rejoué avec un outil ETL** lors de la séance suivante.
+"""
+    )
+
+# ---------------------------
+# Onglet 2 – Consignes & livrables
+# ---------------------------
+
+with tab_instructions:
+    st.header("Consignes pour les étudiant·e·s")
+
+    st.markdown(
+        """
+### 1. Sources de données
+
+Vous disposez de **4 fichiers** représentant des systèmes différents :
+
+1. **Sales** (ventes) – ERP  
+2. **Customers** (clients) – CRM  
+3. **Products** (produits) – catalogue  
+4. **Territories** (territoires) – service international
+
+Tous ces fichiers proviennent du même univers AdventureWorks, mais **ne sont pas intégrés**.
+
+---
+
+### 2. Votre mission – Mini pipeline ETL en Python
+
+Vous devez construire, dans un script Python ou un notebook, un flux qui réalise :
+
+#### E – Extract (Extraction)
+
+- Charger les 4 fichiers depuis le disque (`pandas.read_csv`, `pandas.read_excel`, …).
+- Simuler l’hétérogénéité :
+  - par exemple : 
+    - `Sales` en **CSV**,  
+    - `Customers` en **XLSX**,  
+    - `Products` en **CSV**,  
+    - `Territories` en **CSV**.
+
+#### T – Transform (Transformation)
+
+- Vérifier et convertir les types :
+  - dates (ex : `OrderDate`),  
+  - variables numériques (ex : `UnitPrice`, `OrderQty`, `Discount`).
+- Traiter les **valeurs manquantes** (choisir : suppression, imputation simple… et **justifier** dans le rapport).
+- Traiter les **données incohérentes** (quantité ≤ 0, remise négative ou trop élevée, etc.).
+- Supprimer les **doublons** pertinents.
+- Réaliser les **jointures** pour construire une table intégrée :
+  - `Sales` + `Customers`,  
+  - `Sales` + `Products`,  
+  - `Sales` + `Territories` (via `TerritoryID` ou équivalent).
+- Créer quelques **colonnes dérivées** :
+  - année de commande (`OrderYear`),  
+  - chiffre d’affaires de ligne (`LineTotal`),  
+  - éventuellement marge, etc.
+
+#### L – Load (Chargement)
+
+- Sauvegarder la table finale dans un **fichier unique** :
+  - format recommandé : `clean_adventureworks_sales.csv`
+- Optionnel (bonus) : charger dans une base **SQLite** (`to_sql`).
+
+---
+
+### 3. KPIs à produire dans le notebook / script
+
+À partir de votre table intégrée :
+
+1. Chiffre d’affaires et quantité vendue par **année** et par **catégorie de produit**.  
+2. Top 10 des **clients** par chiffre d’affaires total.  
+3. Chiffre d’affaires par **territoire** (ou pays / région selon les colonnes disponibles).
+
+Les KPIs peuvent être affichés avec `groupby` et `agg` dans des DataFrames formatés.
+
+---
+
+### 4. Livrables attendus
+
+Vous devez déposer via l’interface (onglet **“📤 Dépôt sur GitHub”**) :
+
+1. **Votre code** :
+   - soit un **notebook** (`.ipynb`),  
+   - soit un **script Python** (`.py`).
+2. Un **court rapport** (max 1 page, `.pdf`, `.md`, `.txt` ou `.docx`) répondant aux points suivants :
+   - principaux **problèmes de qualité de données** identifiés,  
+   - **règles de nettoyage** appliquées (et pourquoi),  
+   - schéma simple de votre pipeline (sources → Python → table finale),  
+   - 2–3 **indicateurs clés** que vous jugez exploitables.
+
+Le dépôt sur GitHub est géré automatiquement par cette application.
+"""
+    )
+
+# ---------------------------
+# Onglet 3 – Jeux de données
+# ---------------------------
+
+with tab_data:
+    st.header("Jeux de données pour le TP")
+
+    st.markdown(
+        """
+Les fichiers utilisés dans ce TP doivent être placés **dans le dossier `data/` de l’application Streamlit**.
+
+Pour chaque jeu de données ci-dessous, si le fichier existe côté serveur, vous verrez un bouton de téléchargement.
+Sinon, un message indiquera au formateur qu’il doit ajouter le fichier correspondant.
+"""
+    )
+
+    for label, path in DATA_FILES:
+        st.subheader(label)
+        if os.path.exists(path):
+            with open(path, "rb") as f:
+                data_bytes = f.read()
+            st.download_button(
+                label=f"Télécharger : {os.path.basename(path)}",
+                data=data_bytes,
+                file_name=os.path.basename(path),
+                mime="text/csv" if path.endswith(".csv") else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+            )
+            st.caption(f"Fichier trouvé : `{path}`")
+        else:
+            st.warning(
+                f"Fichier introuvable : `{path}`. "
+                "Le formateur doit ajouter ce fichier dans le répertoire de l’application."
+            )
+
+    st.info(
+        "Remarque : les données d’origine AdventureWorks peuvent être récupérées depuis Kaggle, "
+        "puis exportées / préparées pour ce TP avant d’être déposées dans le dossier `data/`."
+    )
+
+# ---------------------------
+# Onglet 4 – Dépôt sur GitHub
+# ---------------------------
+
+with tab_submit:
+    st.header("Dépôt de votre travail sur GitHub")
+
+    st.markdown(
+        """
+Remplissez les informations ci-dessous et uploadez vos fichiers.  
+L’application créera automatiquement une entrée dans le dépôt GitHub du formateur.
+"""
+    )
+
+    with st.form("submission_form", clear_on_submit=False):
+        col1, col2 = st.columns(2)
+        with col1:
+            student_name = st.text_input("Nom / Prénom", placeholder="Ex : Dupont Alice")
+            student_group = st.text_input("Groupe / Promo", placeholder="Ex : ECYB I1")
+        with col2:
+            student_email = st.text_input("E-mail (optionnel)", placeholder="Ex : prenom.nom@exemple.com")
+            comment = st.text_area("Commentaire (optionnel)", placeholder="Notes pour le formateur...")
+
+        st.markdown("### Fichiers à déposer")
+
+        code_file = st.file_uploader(
+            "Notebook ou script Python",
+            type=["ipynb", "py"],
+            help="Fichier principal contenant votre code (obligatoire)."
+        )
+
+        report_file = st.file_uploader(
+            "Rapport (1 page max)",
+            type=["pdf", "md", "txt", "docx"],
+            help="Court rapport expliquant vos choix de nettoyage et d’intégration (optionnel mais recommandé)."
+        )
+
+        confirm = st.checkbox("Je confirme que ces fichiers constituent ma soumission pour ce TP.")
+
+        submitted = st.form_submit_button("📤 Envoyer sur GitHub")
+
+    if submitted:
+        if not confirm:
+            st.error("Vous devez cocher la case de confirmation avant d’envoyer.")
+        elif not code_file:
+            st.error("Le fichier de code (notebook ou script Python) est obligatoire.")
+        elif GITHUB_TOKEN is None:
+            st.error("Aucun token GitHub n’est configuré. Contacter le formateur.")
+        else:
+            try:
+                now = datetime.datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+                student_slug = slugify(student_name)
+
+                # Dossier étudiant
+                base_dir = f"{SUBMISSIONS_DIR}/{student_slug}_{now}"
+
+                results = []
+
+                # 1) Fichier de code
+                code_bytes = code_file.read()
+                code_ext = os.path.splitext(code_file.name)[1]
+                code_dest = f"{base_dir}/code{code_ext}"
+                resp_code = upload_file_to_github(
+                    file_bytes=code_bytes,
+                    dest_path=code_dest,
+                    token=GITHUB_TOKEN,
+                    repo=GITHUB_REPO,
+                    branch=GITHUB_BRANCH
+                )
+                results.append(("code", resp_code))
+
+                # 2) Rapport (optionnel)
+                if report_file is not None:
+                    report_bytes = report_file.read()
+                    report_ext = os.path.splitext(report_file.name)[1]
+                    report_dest = f"{base_dir}/rapport{report_ext}"
+                    resp_report = upload_file_to_github(
+                        file_bytes=report_bytes,
+                        dest_path=report_dest,
+                        token=GITHUB_TOKEN,
+                        repo=GITHUB_REPO,
+                        branch=GITHUB_BRANCH
+                    )
+                    results.append(("rapport", resp_report))
+
+                # 3) Métadonnées (nom, email, groupe, commentaire)
+                meta_content = f"""Nom complet : {student_name}
+Groupe / Promo : {student_group}
+E-mail : {student_email}
+Commentaire : {comment}
+Date (UTC) : {datetime.datetime.utcnow().isoformat()}
+"""
+                meta_bytes = meta_content.encode("utf-8")
+                meta_dest = f"{base_dir}/meta.txt"
+                resp_meta = upload_file_to_github(
+                    file_bytes=meta_bytes,
+                    dest_path=meta_dest,
+                    token=GITHUB_TOKEN,
+                    repo=GITHUB_REPO,
+                    branch=GITHUB_BRANCH
+                )
+                results.append(("meta", resp_meta))
+
+                # Vérification des réponses GitHub
+                ok = all(r.status_code in (200, 201) for _, r in results)
+                if ok:
+                    st.success("Votre dépôt a bien été envoyé sur GitHub. ✅")
+                    for label, r in results:
+                        st.write(f"- {label} → statut GitHub : {r.status_code}")
+                else:
+                    st.error("Une erreur est survenue lors de l’envoi sur GitHub.")
+                    for label, r in results:
+                        st.write(f"- {label} → statut GitHub : {r.status_code} / réponse : {r.text}")
+
+            except Exception as e:
+                st.error(f"Erreur lors de l’envoi sur GitHub : {e}")
