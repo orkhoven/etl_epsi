@@ -14,16 +14,15 @@ st.set_page_config(
     layout="wide"
 )
 
-# À ADAPTER SELON TON REPO
-GITHUB_REPO = "orkhoven/etl_epsi"  # ex: "orkhoven/nom-du-repo"
+# Repo GitHub cible
+GITHUB_USER = "orkhoven"                # ton username GitHub
+GITHUB_REPO = "orkhoven/etl_epsi"       # ex: "orkhoven/nom-du-repo"
 GITHUB_BRANCH = "main"
 
-# On suppose que le token est correctement configuré.
-# Si ce n'est pas le cas, Streamlit lèvera une erreur au démarrage,
-# ce qui évite le message "Aucun token GitHub..." dans le flux normal.
+# Token stocké dans .streamlit/secrets.toml ou dans les secrets Streamlit Cloud
 GITHUB_TOKEN = st.secrets["GITHUB_TOKEN"]
 
-SUBMISSIONS_DIR = "submissions"  # dossier dans le repo
+SUBMISSIONS_DIR = "submissions"         # dossier dans le repo
 
 # 4 CSV avec les noms proches des fichiers originaux AdventureWorks
 DATA_FILES = [
@@ -52,8 +51,13 @@ def upload_file_to_github(
     dest_path: str,
     token: str,
     repo: str,
-    branch: str = "main"
+    branch: str = "main",
 ) -> requests.Response:
+    """
+    Envoie un fichier dans un repo GitHub via l'API.
+    Utilise authentification basique (username + PAT).
+    Crée toujours un nouveau fichier (nom unique) pour éviter la gestion des SHA.
+    """
     if token is None:
         raise RuntimeError("Token GitHub manquant (variable GITHUB_TOKEN).")
 
@@ -67,11 +71,17 @@ def upload_file_to_github(
     }
 
     headers = {
-        "Authorization": f"token {token}",
         "Accept": "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
     }
 
-    response = requests.put(url, headers=headers, json=data)
+    # Authentification: username + PAT (PAT remplace le mot de passe)
+    response = requests.put(
+        url,
+        headers=headers,
+        json=data,
+        auth=(GITHUB_USER, token),
+    )
     return response
 
 
@@ -330,6 +340,7 @@ L’application créera automatiquement une entrée dans le dépôt GitHub du fo
                 now = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
                 student_slug = slugify(student_name)
 
+                # Dossier étudiant
                 base_dir = f"{SUBMISSIONS_DIR}/{student_slug}_{now}"
 
                 results = []
