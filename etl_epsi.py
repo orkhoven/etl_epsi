@@ -15,16 +15,17 @@ st.set_page_config(
 )
 
 # À ADAPTER SELON TON REPO
-GITHUB_REPO = "orkhoven/etl_epsi"  
+GITHUB_REPO = "orkhoven/etl_epsi"  # ex: "orkhoven/nom-du-repo"
 GITHUB_BRANCH = "main"
 GITHUB_TOKEN = st.secrets.get("GITHUB_TOKEN", None)      # à ajouter dans .streamlit/secrets.toml
 SUBMISSIONS_DIR = "submissions"                          # dossier dans le repo
 
+# 4 CSV avec les noms proches des fichiers originaux AdventureWorks
 DATA_FILES = [
-    ("Ventes (Sales)", "data/sales.csv"),
-    ("Clients (Customers)", "data/customers.xlsx"),
-    ("Produits (Products)", "data/products.csv"),
-    ("Territoires (Territories)", "data/territories.csv"),
+    ("Ventes 2020 (Sales)", "data/AdventureWorks Sales Data 2020.csv"),
+    ("Clients (Customer Lookup)", "data/AdventureWorks Customer Lookup.csv"),
+    ("Produits (Product Lookup)", "data/AdventureWorks Product Lookup.csv"),
+    ("Territoires (Territory Lookup)", "data/AdventureWorks Territory Lookup.csv"),
 ]
 
 
@@ -110,7 +111,7 @@ Pour fonctionner, AdventureWorks s’appuie sur plusieurs systèmes :
 - un **système catalogue produits**,  
 - un **système de gestion des territoires commerciaux**.
 
-Chacun de ces systèmes exporte des données dans des formats différents (CSV, Excel, etc.).  
+Chacun de ces systèmes exporte des données dans des fichiers séparés (CSV).  
 La direction veut maintenant **centraliser** ces données pour suivre :
 
 - la performance des ventes,  
@@ -129,7 +130,7 @@ et produire une table propre, prête pour l’analyse.
         """
 À la fin de ce TP, vous devez être capable de :
 
-- **Extraire** des données issues de plusieurs fichiers (formats différents),  
+- **Extraire** des données issues de plusieurs fichiers (sources distinctes),  
 - **Transformer** ces données (nettoyage, typage, jointures, colonnes dérivées),  
 - **Charger** le résultat dans un fichier unique (CSV ou base SQLite).
 
@@ -148,12 +149,19 @@ with tab_instructions:
         """
 ### 1. Sources de données
 
-Vous disposez de **4 fichiers** représentant des systèmes différents :
+Vous disposez de **4 fichiers CSV** représentant des systèmes différents :
 
-1. **Sales** (ventes) – ERP  
-2. **Customers** (clients) – CRM  
-3. **Products** (produits) – catalogue  
-4. **Territories** (territoires) – service international
+1. **AdventureWorks Sales Data 2020.csv**  
+   → données de ventes (ERP) pour l’année 2020  
+
+2. **AdventureWorks Customer Lookup.csv**  
+   → référentiel clients (CRM)  
+
+3. **AdventureWorks Product Lookup.csv**  
+   → référentiel produits (catalogue)  
+
+4. **AdventureWorks Territory Lookup.csv**  
+   → référentiel territoires commerciaux  
 
 Tous ces fichiers proviennent du même univers AdventureWorks, mais **ne sont pas intégrés**.
 
@@ -165,35 +173,30 @@ Vous devez construire, dans un script Python ou un notebook, un flux qui réalis
 
 #### E – Extract (Extraction)
 
-- Charger les 4 fichiers depuis le disque (`pandas.read_csv`, `pandas.read_excel`, …).
-- Simuler l’hétérogénéité :
-  - par exemple : 
-    - `Sales` en **CSV**,  
-    - `Customers` en **XLSX**,  
-    - `Products` en **CSV**,  
-    - `Territories` en **CSV**.
+- Charger les 4 fichiers depuis le disque avec `pandas.read_csv`.
+- Vérifier rapidement la structure de chaque table (`head()`, `info()`, `describe()` pour les variables numériques).
 
 #### T – Transform (Transformation)
 
 - Vérifier et convertir les types :
-  - dates (ex : `OrderDate`),  
-  - variables numériques (ex : `UnitPrice`, `OrderQty`, `Discount`).
+  - dates (ex : date de commande s’il y en a),  
+  - variables numériques (ex : prix, quantités, remises).
 - Traiter les **valeurs manquantes** (choisir : suppression, imputation simple… et **justifier** dans le rapport).
 - Traiter les **données incohérentes** (quantité ≤ 0, remise négative ou trop élevée, etc.).
 - Supprimer les **doublons** pertinents.
 - Réaliser les **jointures** pour construire une table intégrée :
-  - `Sales` + `Customers`,  
-  - `Sales` + `Products`,  
-  - `Sales` + `Territories` (via `TerritoryID` ou équivalent).
-- Créer quelques **colonnes dérivées** :
-  - année de commande (`OrderYear`),  
+  - `Sales` + `Customer Lookup`,  
+  - `Sales` + `Product Lookup`,  
+  - `Sales` + `Territory Lookup`.
+- Créer quelques **colonnes dérivées** (adapter aux colonnes disponibles) :
+  - année de commande (`OrderYear` ou équivalent),  
   - chiffre d’affaires de ligne (`LineTotal`),  
-  - éventuellement marge, etc.
+  - éventuellement marge si les colonnes le permettent.
 
 #### L – Load (Chargement)
 
 - Sauvegarder la table finale dans un **fichier unique** :
-  - format recommandé : `clean_adventureworks_sales.csv`
+  - format recommandé : `clean_adventureworks_sales_2020.csv`
 - Optionnel (bonus) : charger dans une base **SQLite** (`to_sql`).
 
 ---
@@ -202,9 +205,9 @@ Vous devez construire, dans un script Python ou un notebook, un flux qui réalis
 
 À partir de votre table intégrée :
 
-1. Chiffre d’affaires et quantité vendue par **année** et par **catégorie de produit**.  
+1. Chiffre d’affaires et quantité vendue par **année** (ou mois) et par **catégorie de produit** (selon les colonnes du Product Lookup).  
 2. Top 10 des **clients** par chiffre d’affaires total.  
-3. Chiffre d’affaires par **territoire** (ou pays / région selon les colonnes disponibles).
+3. Chiffre d’affaires par **territoire** (ou pays / région selon les colonnes du Territory Lookup).
 
 Les KPIs peuvent être affichés avec `groupby` et `agg` dans des DataFrames formatés.
 
@@ -236,7 +239,13 @@ with tab_data:
 
     st.markdown(
         """
-Les fichiers utilisés dans ce TP doivent être placés **dans le dossier `data/` de l’application Streamlit**.
+Les fichiers utilisés dans ce TP doivent être placés **dans le dossier `data/` de l’application Streamlit**  
+avec **les noms suivants** :
+
+- `AdventureWorks Sales Data 2020.csv`  
+- `AdventureWorks Customer Lookup.csv`  
+- `AdventureWorks Product Lookup.csv`  
+- `AdventureWorks Territory Lookup.csv`
 
 Pour chaque jeu de données ci-dessous, si le fichier existe côté serveur, vous verrez un bouton de téléchargement.
 Sinon, un message indiquera au formateur qu’il doit ajouter le fichier correspondant.
@@ -252,7 +261,7 @@ Sinon, un message indiquera au formateur qu’il doit ajouter le fichier corresp
                 label=f"Télécharger : {os.path.basename(path)}",
                 data=data_bytes,
                 file_name=os.path.basename(path),
-                mime="text/csv" if path.endswith(".csv") else "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                mime="text/csv"
             )
             st.caption(f"Fichier trouvé : `{path}`")
         else:
@@ -262,8 +271,8 @@ Sinon, un message indiquera au formateur qu’il doit ajouter le fichier corresp
             )
 
     st.info(
-        "Remarque : les données d’origine AdventureWorks peuvent être récupérées depuis Kaggle, "
-        "puis exportées / préparées pour ce TP avant d’être déposées dans le dossier `data/`."
+        "Remarque : les données AdventureWorks peuvent être récupérées depuis Kaggle ou un dépôt GitHub, "
+        "puis copiées / renommées pour correspondre exactement aux fichiers ci-dessus."
     )
 
 # ---------------------------
