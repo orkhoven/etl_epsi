@@ -76,6 +76,7 @@ Ce TP correspond à la **Partie 1 – Intégration de données en Python** du mo
 **TRDE703 – Intégration des données (Mastère Expert en Cybersécurité)**.
 
 L’objectif est de construire un **mini pipeline ETL en Python**
+selcuk_orkun@yahoo.com
 """
 )
 
